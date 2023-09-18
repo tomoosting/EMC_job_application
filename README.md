@@ -50,22 +50,22 @@ mkdir -p $TMP
 
 #genotype and filter
 echo "performing genotyping and filtering"
-bcftools mpileup 	-f $REF 							\
-					-b $BAM 							\
-					-r $REG								\
-					-a 'INFO/AD,FORMAT/AD,FORMAT/DP'	|
-bcftools call 		-m 									\
-					-Ou 								\
-					-f GQ 								|	 
-bcftools +fill-tags	-Ou 								\
-					-- -t AC,AF,AN,MAF,NS				|
-bcftools filter		-Ou									\
-					-S .								\
-					--exclude 'FMT/DP<3 | FMT/GQ<20'	|
-bcftools view		-Oz									\
-					-M2									\
-					--exclude 'STRLEN(REF)!=1 | STRLEN(ALT) >=2 | QUAL<600 | AVG(FMT/DP)<8 | AVG(FMT/DP)>25 ' 	\
-					-o $TMP/$REG'_'$SET'_raw.allsites.vcf.gz'
+bcftools mpileup    -f $REF                           \
+                    -b $BAM                           \
+                    -r $REG                           \
+                    -a 'INFO/AD,FORMAT/AD,FORMAT/DP'  |
+bcftools call       -m                                \
+                    -Ou                               \
+                    -f GQ                             |	 
+bcftools +fill-tags -Ou                               \
+                    -- -t AC,AF,AN,MAF,NS             |
+bcftools filter     -Ou                               \
+                    -S .                              \
+                    --exclude 'FMT/DP<3 | FMT/GQ<20'  |
+bcftools view       -Oz                               \
+                    -M2                               \
+                    --exclude 'STRLEN(REF)!=1 | STRLEN(ALT) >=2 | QUAL<600 | AVG(FMT/DP)<8 | AVG(FMT/DP)>25 ' 	\
+                    -o $TMP/$REG'_'$SET'_raw.allsites.vcf.gz'
 
 #create index
 echo "creating index"
@@ -73,13 +73,13 @@ tabix -f $TMP/$REG'_'$SET'_raw.allsites.vcf.gz'
 
 # run pixy
 echo "running pixy"
-pixy	--stats pi dxy fst								\
-		--vcf $TMP/$REG'_'$SET'_raw.allsites.vcf.gz'	\
-		--populations $POP								\
-		--window_size 5000								\
-		--n_cores 4										\
-		--output_folder $OUT							\
-		--output_prefix $REG'_'$SET	
+pixy --stats pi dxy fst                           \
+     --vcf $TMP/$REG'_'$SET'_raw.allsites.vcf.gz' \
+     --populations $POP                           \
+     --window_size 5000                           \
+     --n_cores 4                                  \
+     --output_folder $OUT                         \
+     --output_prefix $REG'_'$SET	
 ```
 ### 2. genome scan (genome_scan.Rmd) 
 This Rmarkdown script utilises a different package to perform a genome scan (i.e. PopGenome).
