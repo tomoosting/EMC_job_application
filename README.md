@@ -64,16 +64,16 @@ bcftools filter     -Ou                               \
 bcftools view       -Oz                               \
                     -M2                               \
                     --exclude 'STRLEN(REF)!=1 | STRLEN(ALT) >=2 | QUAL<600 | AVG(FMT/DP)<8 | AVG(FMT/DP)>25' \
-                    -o $TMP/$REG'_'$SET'_raw.allsites.vcf.gz'
+                    -o $TMP/$REG'_'$SET'.allsites.vcf.gz'
 
 #create index
 echo "creating index"
-tabix -f $TMP/$REG'_'$SET'_raw.allsites.vcf.gz'
+tabix -f $TMP/$REG'_'$SET'.allsites.vcf.gz'
 
 #run pixy
 echo "running pixy"
 pixy --stats pi dxy fst                           \
-     --vcf $TMP/$REG'_'$SET'_raw.allsites.vcf.gz' \
+     --vcf $TMP/$REG'_'$SET'.allsites.vcf.gz'     \
      --populations $POP                           \
      --window_size 5000                           \
      --n_cores 4                                  \
@@ -85,7 +85,7 @@ pixy --stats pi dxy fst                           \
 ```
 ### 2. genome scan (genome_scan.Rmd) 
 This Rmarkdown script utilises a different package to perform a genome scan (i.e. PopGenome).
-The script first imports the associated functions.R containing custom fuctions I've created.
+The script first imports the associated functions.R file containing custom fuctions I've created.
 ![alt text](./Figures/snapper_norm_qc_slw5000_genome_scan.png)
 
 
