@@ -6,8 +6,8 @@ Contents
 2. Rmarkdown file containing source code for performing and visualising a genome scan (different package than the one above but same approach)
 
 ### 1. SBATCH array
-The following script uses bam files and a file with sample and populaiton information to generare an AllSites VCF.
-Resulting VCF file is tab indexed an analysed using pixy.
+The following script uses bam files and a file with sample and populaiton information to generate AllSites VCF per linkage group.
+Resulting VCF files are tab indexed an run in [pixy](https://pixy.readthedocs.io/en/latest/index.html).
 Output from pixy is used in R to scan the genome for signs of selection.
 ```
 #!/bin/bash
@@ -63,7 +63,7 @@ bcftools filter     -Ou                               \
                     --exclude 'FMT/DP<3 | FMT/GQ<20'  |
 bcftools view       -Oz                               \
                     -M2                               \
-                    --exclude 'STRLEN(REF)!=1 | STRLEN(ALT) >=2 | QUAL<600 | AVG(FMT/DP)<8 | AVG(FMT/DP)>25' \
+                    --exclude 'STRLEN(REF)!=1 | STRLEN(ALT) >=2 | QUAL<600 | AVG(FMT/DP)<8 | AVG(FMT/DP) >25' \
                     -o $TMP/$REG'_'$SET'.allsites.vcf.gz'
 
 #create index
@@ -84,8 +84,15 @@ pixy --stats pi dxy fst                           \
 #rm -r $TMP	#only run this if you're sure you no longer need the AllSites VCF files, they are large!
 ```
 ### 2. genome scan (genome_scan.Rmd) 
-This Rmarkdown script utilises a different package to perform a genome scan (i.e. PopGenome).
-The script first imports the associated functions.R file containing custom fuctions I've created.
+This Rmarkdown script utilises a different package to perform a genome scan (i.e. [PopGenome](https://popgenome.weebly.com/)).
+The script also imports the associated functions.R file containing custom fuctions I've created.
+These include functions importing/generating gds files, extracting SNP information and range of other functions I use in this or other analyses.
+input for this analyses is:
+1. gds file (SNPRelate version of a VCF which loads instantly even if containing millios of SNPS)
+2. sample file contianing sample IDs (IND), and population IDs (GENETIC_CLUSTER)
+3. Reference genome fai file to obtain linkage group name and lenghts
+4. Indexed VCF.gz files for each linkage group
+The script performs a sliding window analyses, estimating summary statistics like nucleotide diversity, Tajima's D, dxy, and FST. Results are visualised in a Manhattan. The X-axis shows the position on the genome with chromosomes/linkage groups indicated, and for each seperate panel the Y-axis shows the estimate for a specific summary statistic. Here I used FST > 0.15 (a measure for relative population divergence) to identify which genomic regions may be under selection. the other summary statistics provide information which evolutionary processes may driven selection.
 ![alt text](./Figures/snapper_norm_qc_slw5000_genome_scan.png)
 
 
