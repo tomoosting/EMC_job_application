@@ -1,0 +1,311 @@
+---
+title: "genome_scan"
+author: "Tom Oosting"
+date: '2023-08-17'
+output: html_document
+---
+
+#load packages
+```{r}
+library(tidyverse)
+library(stringr)
+library(glue)
+library(runner)
+library(rlist)
+library(PopGenome)
+library(ggplot2)
+library(ggsignif)
+library(RColorBrewer)
+library(ggsci)
+library(scales)
+library(patchwork)
+library(vcfR)
+source("functions.R")
+```
+
+#set parameters
+```{r}
+#input
+data_set      <- "snapper_norm"
+filter        <- "qc"
+SNP_ext       <- glue("D:/Research/Projects/snapper/05_data/{data_set}/{data_set}_{filter}")
+sample_file   <- glue("D:/Research/Projects/snapper/01_sample_information/snapper.sample_info.tsv")
+ref_genome    <- "D:/Research/Projects/snapper/02_reference_genome/Nuclear/Chrysophrys_auratus.v.1.0.all.assembly.units.fasta"
+
+#output
+output_dir     <- glue("D:/Research/Projects/snapper/06_output/{data_set}_hithub/genome_scan")
+dir.create(output_dir)
+
+#parameters
+slw           <- 5000 #size sliding window
+fst_threshold <- 0.15 #FST threshold for identifying genomic regions of high genetic divergence
+```
+
+#load SNP data
+```{r}
+#read gds snprelate
+gds <- snpgdsReadGDS(gds_file = paste0(SNP_ext,".gds")) #gdsfmt::closefn.gds(gds) if you need to close the gds file
+#extract locus information
+bim <- snpgdsSNPsum(gds = gds, extended = FALSE)
+```
+
+#load sample information
+```{r}
+#Sample information and population information
+sample_info <- read_tsv(sample_file)
+samples <- read.gdsn(index.gdsn(gds, "sample.id"))
+sample_info <- sample_info %>% filter(IND %in% samples) %>% dplyr::arrange(IND)
+sample_info <- sample_info[match(samples, sample_info$IND),]
+#this needs to be TRUE!
+identical(samples, sample_info$IND)
+
+#sample and population vectors
+IND_vec <- sample_info$IND
+POP_vec <- sample_info$GENETIC_CLUSTER
+
+#get population metrics
+pops      <- unique(sample_info$GENETIC_CLUSTER)
+Npops     <- length(pops)
+pop_combs <- as.data.frame(t(utils::combn(pops,2)))
+pop_combs <- pop_combs %>% mutate(merge = paste(V1,V2,sep = ".vs."))
+colnames(pop_combs) <- c("pop1","pop2","combID")
+combs     <- pop_combs$combID
+N_comb    <- nrow(pop_combs)
+```
+
+#load genome information
+```{r}
+#information reference genome
+fai <- read_tsv(paste0(ref_genome,".fai"), col_names = FALSE) %>% as.tibble()
+colnames(fai) <- c("LG","len","cum","X1","X2")
+```
+
+#estimate population statistics seperately for each chromosome/linkage group (first 24 LGs)
+#due to bug in PopGenome::readVCF you need sepearte vcf files for each linkage group
+```{r}
+LG_list <- list()
+for (LGi in 1:24) {
+    #LG info
+    LG     <- fai$LG[LGi]
+    chr    <- as.numeric(str_remove(LG,"LG"))
+    LG_len <- fai$len[LGi]
+    #window intervals
+    window_start <- seq(from =1, to = LG_len, by = slw)
+    window_stop  <- window_start + slw
+    #remove frames larger than max lG size
+    window_start <- window_start[which(window_stop < LG_len)]
+    window_stop <- window_stop[which(window_stop < LG_len)]
+    #create window df
+    windows_df <- data.frame(start = window_start, 
+                             stop  = window_stop, 
+                             mid   = window_start + (window_stop-window_start)/2)
+    
+    #get number of snps for each sliding window
+    bim_LG       <- dplyr::filter(bim, LG == chr)
+    windows_df$N <-  runner(x   = bim_LG,
+                            idx = "POS",  
+                            f   = function(x){nrow(x)},
+                            k   = slw,
+                            at  = windows_df$stop)
+    #load vcf, unfortunately has to a seperate file for each linkage group instead of a single vcf.gz file...
+    vcf <- PopGenome::readVCF(glue("{dirname(SNP_ext)}/{LG}_{basename(SNP_ext)}.vcf.gz"), tid = LG, numcols = 2000, frompos = 1, topos = LG_len, include.unknown = TRUE)
+    populations <- split( IND_vec,  POP_vec)
+    vcf <- set.populations(vcf, populations, diploid = T)
+    get.sum.data(vcf)
+    #create genome object ready for window analyses 
+    vcf_slw  <- sliding.window.transform(vcf , width = slw, jump =  slw ,type = 2)
+    
+    #perform analyses
+    #nucleotide diversity
+    vcf_slw <- diversity.stats(vcf_slw, pi = TRUE)
+    vcf_slw <- diversity.stats.between(vcf_slw)
+    #FST
+    vcf_slw <- F_ST.stats(vcf_slw, mode = "nucleotide")
+    #neutrality stats
+    vcf_slw <- PopGenome::neutrality.stats(vcf_slw)
+    # allele fre
+    vcf_slw <- PopGenome::detail.stats(vcf_slw)
+    
+    #extract values
+    #nucleotide diversity
+    nuc_div <- vcf_slw@nuc.diversity.within/slw
+    pops <- unique(POP_vec)
+    colnames(nuc_div) <- paste0("pi_",pops)
+    #Fst
+    fst <- t(vcf_slw@nuc.F_ST.pairwise)
+    #dxy
+    dxy <- get.diversity(vcf_slw, between = T)[[2]]/slw
+    #Tajima.D
+    TjD  <- vcf_slw@Tajima.D
+    
+    # replace generic population indicators with population names
+    i <- paste0("pop",1:Npops)
+    x <- colnames(fst)
+    for(j in 1:Npops){
+        x <- sub(i[j], pops[j],x)
+    }
+    colnames(fst) <- paste0("fst_",x)
+    colnames(dxy) <- paste0("dxy_",x)
+    colnames(TjD) <- paste0("tjd_",pops)
+    # create dataframe containing all estimates
+    vcf_data <- as_tibble(data.frame(windows_df, nuc_div, fst, dxy, TjD))
+    vcf_data$chr <- chr
+    vcf_data$LG  <- LG
+    
+    ### population comparisons for pi, Tajima'D, Depth, and Alternative allele frequency
+    for (i in 1:N_comb){
+        #i<-1
+        #LG <- paste0("LG",i)   
+        pop1 <- pop_combs[i,1]
+        pop2 <- pop_combs[i,2] 
+        name <- pop_combs[i,3]
+        comp <- paste0("comp_",name)
+        d_pi <- paste0("delta.pi_",name)
+        d_tjd<- paste0("delta.tjd_",name)
+        stop    <- vcf_data$stop
+        
+        #create comparison specific data_frame from sliding window analyses
+        sw_df <- dplyr::select(vcf_data,mid) %>% 
+                 dplyr::mutate("{comp}"      := name
+                              ,"{d_pi}"      := vcf_data[[eval(paste0("pi_" ,pop1))]] - vcf_data[[eval(paste0("pi_",pop2))]]
+                              ,"{d_tjd}"     := vcf_data[[eval(paste0("tjd_",pop1))]] - vcf_data[[eval(paste0("tjd_",pop2))]])
+        vcf_data <- full_join(vcf_data,sw_df)
+    }
+  LG_list[[LG]] <- vcf_data  
+}
+
+#bind data from each chromosome/linkage group
+slw_data <- rlist::list.rbind(LG_list)
+slw_data <- left_join(slw_data,fai) %>%
+  mutate(tot = cumsum(len)-len) %>%
+  # Add a cumulative position of each SNP
+  arrange(chr, mid) %>%
+  mutate(BPcum  = mid+tot) %>%
+  filter(!is.na(N))
+write_tsv(x = slw_data, file = glue("{output_dir}/{data_set}_{filter}_slw{slw}_genome_scan.tsv"))
+```
+#or just load the data if you've already done the analyses previously
+```{r}
+slw_data <- read_tsv(glue("{output_dir}/{data_set}_{filter}_slw{slw}_genome_scan.tsv"))
+```
+
+#create seperate dataframe for population comparison esimates (fst, dxy, delta.pi, delta.TD) en population specific esimates (pi, TD)
+```{r}
+##slw_df
+#pop
+slw_pop_list <- list()
+slw_pop <- slw_data %>% dplyr::select(chr,LG,mid,start,stop,BPcum)
+#i <- pops[1]
+for(i in pops){
+   pop_df    <- dplyr::select(slw_data,matches(paste0("_",i,"$")))
+   new_names <- colnames(pop_df) %>% str_remove(.,paste0("_",i))
+   colnames(pop_df) <- new_names
+   pop_df$pop <- i
+   pop_df <- bind_cols(slw_pop,pop_df)
+   slw_pop_list[[i]] <- pop_df
+}
+slw_pop <- rlist::list.rbind(slw_pop_list) %>% arrange(pop,BPcum)
+#comp
+slw_comp_list <- list()
+slw_comp <- slw_data %>% dplyr::select(chr,LG,mid,start,stop,BPcum)
+for(i in combs){
+   comp_df    <- dplyr::select(slw_data,matches(paste0("_",i,"$")))
+   new_names <- colnames(comp_df) %>% str_remove(.,paste0("_",i))
+   colnames(comp_df) <- new_names
+   comp_df$comp <- i
+   comp_df <- bind_cols(slw_comp,comp_df)
+   slw_comp_list[[i]] <- comp_df
+}
+slw_comp <- rlist::list.rbind(slw_comp_list) %>% arrange(comp,BPcum)
+```
+
+#plotting aesthetics
+```{r}
+#set colors 
+pop_cols  <- scale_color_manual(values = pal_nejm("default")(5)[c(1:4)]) 
+comp_cols <- scale_color_manual(values = pal_npg("nrc")(5)[c(3)]) 
+
+#axis showing linkage groups
+axisdf = slw_data %>% group_by(chr) %>% summarize(center =(max(BPcum) + min(BPcum) ) / 2 
+                                                 ,start  = min(BPcum)
+                                                 ,stop   = max(BPcum)
+                                                 ,ymin   = -50
+                                                 ,ymax   = 1000)
+x_scale    <- scale_x_continuous(label=axisdf$chr,breaks = axisdf$center,expand=c(0,0))
+
+#linkage group rectangles
+bg_rect <- annotate("rect", xmin = axisdf$start, xmax = axisdf$stop, 
+    ymin = axisdf$ymin, ymax = axisdf$ymax, alpha = .5, fill = rep(c("darkgrey","white"),20)[1:nrow(axisdf)] )
+
+#reduced aesthetics for most plots
+theme_adj  <- theme(axis.title.x        = element_blank(),
+                    axis.text.x         = element_blank(),
+                    axis.ticks.x.bottom = element_blank(),
+                    panel.grid          = element_blank(),
+                    axis.line.y.left    = element_line(),
+                    axis.text.y         = element_text(size = 10),
+                    axis.title.y        = element_text(size = 15),
+                    plot.margin = unit(c(0,0,0.0,0), units = "in"))
+ 
+#modified aesthetics for last plot 
+theme_last <- theme(panel.grid  = element_blank(),
+                    plot.margin = unit(c(0,0,0.0,0), units = "in"),
+                    axis.text.x = element_text(angle = 0, size = 18),
+                    axis.title.x = element_text(size = 14, face = "bold"))
+```
+
+#create main plot
+```{r, fig.width = 20, fig.height = 8}
+pi   <- ggplot(slw_pop, aes(x=BPcum)) + bg_rect + 
+  geom_point(aes(y=pi, color = pop), size = 0.5) +
+  labs(color = "Genetic Cluster") +
+  coord_cartesian(ylim = c(min(slw_pop$pi,na.rm =T),max(slw_pop$pi,na.rm =T))) +
+  ylab(expression(pi))+ pop_cols + theme_bw() + x_scale + theme_adj
+
+dpi  <- ggplot(slw_comp, aes(x=BPcum)) + bg_rect + 
+  geom_point(aes(y=delta.pi, color = comp), size = 0.5) +
+  labs(color = "Comparison") +
+  coord_cartesian(ylim = c(min(slw_comp$delta.pi,na.rm =T),max(slw_comp$delta.pi,na.rm =T))) +
+  ylab(expression(Delta*pi))+ comp_cols + theme_bw() + x_scale + theme_adj
+
+fst <- ggplot(slw_comp, aes(x=BPcum)) + bg_rect + 
+  geom_hline(yintercept = fst_threshold, linetype = "dashed") +
+  geom_point(aes(y=fst,color=comp), size = 0.5) +
+  geom_point(data = . %>% filter(fst > fst_threshold), aes(y=fst), size=0.5, color="red") +
+  labs(color = "Comparison") +
+  coord_cartesian(ylim = c(min(slw_comp$fst,na.rm =T),max(slw_comp$fst,na.rm =T)))+
+  ylab(expression(italic(F)[ST]))+ comp_cols + theme_bw() + x_scale + theme_adj
+
+dxy <- ggplot(slw_comp,aes(x=BPcum)) + bg_rect + 
+  geom_point(aes(y=dxy,color=comp), size = 0.5) +
+  labs(color = "Comparison") +
+  coord_cartesian(ylim = c(min(slw_comp$dxy,na.rm =T),max(slw_comp$dxy,na.rm =T)))+
+  ylab(expression(italic(d)[xy]))+ comp_cols + theme_bw() + x_scale + theme_adj
+
+dTD  <- ggplot(slw_comp,aes(x=BPcum)) + bg_rect +
+  geom_point(aes(y=delta.tjd,color=comp), size = 0.5) +
+  labs(color = "Comparison") +
+  coord_cartesian(ylim = c(min(slw_comp$delta.tjd,na.rm =T),max(slw_comp$delta.tjd,na.rm =T)))+
+  ylab(expression(Delta*D[T]))+ comp_cols + theme_bw() + x_scale + theme_adj
+  
+TD   <- ggplot(slw_pop,aes(x=BPcum)) + bg_rect + 
+  geom_point(aes(y=tjd,color=pop), size = 0.5) +
+  labs(color = "Genetic Cluster") +
+  xlab("Linkage Group") +
+  coord_cartesian(ylim = c(min(slw_pop$tjd,na.rm =T),max(slw_pop$tjd,na.rm =T))) +
+  ylab(expression(D[T])) + pop_cols + theme_bw() + x_scale + theme_last
+
+all <- pi/ dpi / fst / dxy / dTD / TD +
+      plot_layout(guides    = "collect") & 
+      theme(legend.title    = element_text(size = 20,face = "bold"),
+            legend.text     = element_text(size = 15),
+            legend.position = 'top') & 
+      guides(color = guide_legend(override.aes = list(size = 7)))
+ggsave(filename = glue("{output_dir}/{data_set}_{filter}_slw{slw}_genome_scan.png"),plot =  all, dpi = 600, height = 8, width = 20, units = "in")
+```
+
+
+
+
+
+
