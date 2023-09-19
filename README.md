@@ -92,7 +92,6 @@ input for this analyses is:
 2. sample file contianing sample IDs (IND), and population IDs (GENETIC_CLUSTER)
 3. Reference genome fai file to obtain linkage group name and lenghts
 4. Indexed VCF.gz files for each linkage group
+
 The script performs a sliding window analyses, estimating summary statistics like nucleotide diversity, Tajima's D, dxy, and FST. Results are visualised in a Manhattan. The X-axis shows the position on the genome with chromosomes/linkage groups indicated, and for each seperate panel the Y-axis shows the estimate for a specific summary statistic. Here I used FST > 0.15 (a measure for relative population divergence) to identify which genomic regions may be under selection. the other summary statistics provide information which evolutionary processes may driven selection.
 ![alt text](./Figures/snapper_norm_qc_slw5000_genome_scan.png)
-
-
