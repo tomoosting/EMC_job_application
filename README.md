@@ -119,7 +119,7 @@ The script first generates the "main" RDA plot and then produces multiple panel 
 The ordination plot shows how genetic variation present within each individual is correlated with envrinmental parameters, vectors show the direction in which the correlation between genetic variation and that specific factor is strongest.  
 ![alt text](./Figures/snapper_382_qc_thin5000_heterogeneous_MAIN_joined.png)
 
-**panal plots**
+**panel plots**
 
 The last section of the script loops over each environmental factor and generates a panel for each. the maps show how the environmetnal gradients and the location of each sample. The ordination plot is similar to the main plot but only shows the vector for a specific envrionmental factor. Samples are colored based on the value of the environmental parameter at the given sample location. The regression plot shows relationship with the first axis of the RDA and environmental parameters for each sample. And finally, the Manhattan plot shows  whichs SNPs are signicantly correlated with the first axis of the RDA, with the y-axis showing the correlation (r2) allele frequencues of that SNP in the population and that specific environmental factor.
 ![alt text](./Figures/snapper_382_qc_thin5000_heterogeneous_Sea_water_temperature_PC1_joined.png)
