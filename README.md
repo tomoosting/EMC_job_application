@@ -1,9 +1,10 @@
 # EMC_job_application
-Source code Tom Oosting
+Source code from Tom Oosting
 
-Contents
+**Contents**
+
 1. Sbatch array script for genotyping by chromosome using BCFtools and estimateing summary statistics for a genome scan
-2. Rmarkdown script containing source code for performing and visualising a genome scan (different package than the one above but same approach)
+2. Rmarkdown script containing source code for the analyses and visualisation of a genome scan (different package than the one above but same approach)
 3. Rmarkdown script containing source code for visualising the results from an RDA analyses.
 
 ### 1. SBATCH array
@@ -97,23 +98,25 @@ input for this analyses is:
 The script performs a sliding window analyses, estimating summary statistics like nucleotide diversity, Tajima's D, dxy, and FST. Results are visualised using Manhattan plots. For plotting, cumulative positions (BPcum) have been obtained so esimates from seperate chromosomes can be plotting along the same axis. The X-axis shows the position on the genome with chromosomes/linkage groups indicated, and for each seperate panel the Y-axis shows the estimate for a specific summary statistic. Here I used FST > 0.15 (a measure for relative population divergence) to identify which genomic regions may be under selection. the other summary statistics provide information which evolutionary processes may driven selection.
 ![alt text](./Figures/snapper_norm_qc_slw5000_genome_scan.png)
 
-### 3. Visialisation RDA analyses
-!!!lines 160-215 have been adopted from a turorial!!!
-The input for this analyses is more extensive. Similar to the genome scans, the scripts load:
+### 3. Visialisation Redundancy Analysis (RDA) analyses
+!!!lines 160-215 have been adopted and modified from a turorial!!!
+The input for this analyses is more extensive. Similar to the genome scans, the script loads:
 1. gds file with genotype information
-2. sample information including sample names, sample locations, GPS coordinates
+2. sample information including columns with sample names, sample locations, GPS coordinates
 
 The rest is the output from the RDA analyses which was done in a different script, including:
 1. environmental parameters associated with the sample location of each individual (pH, temperature, etc..)
 2. imputed SNP matrix
-3. RDA output
+3. object produced by the RDA analyses
 4. data from Bio-ORACLE for plotting environmental parameters on spatial maps
 
 The script generates a "main" RDA plot and then produces multiple panel plots that visualises the relation between genomic diversity and environmetnal parameters. 
 **main plot**
+
 The ordination plot shows how genetic variation present within each individual is correlated with envrinmental parameters, vectors show the direction in which the correlation between genetic variation and that specific factor is strongest.  
 ![alt text](./Figures/snapper_382_qc_thin5000_heterogeneous_MAIN_joined.png)
 **panal plots**
+
 The last section of the script loops over each environmental factor and generates a panel for each. the maps show how the environmetnal gradients and the location of each sample. The ordination plot is similar to the main plot but only shows the vector for a specific envrionmental factor. Samples are colored based on the value of the environmental parameter at the given sample location. the regression plot shows relationship with the first axis of the RDA and environmental parameters for each sample. And finally, the Manhattan plot shows  whichs SNPs are signicantly correlated with the first axis of the RDA, with the y-axis showing the correlation (r2) allele frequencues of that SNP in the population and that specific environmental factor.
 ![alt text](./Figures/snapper_382_qc_thin5000_heterogeneous_Sea_water_temperature_PC1_joined.png)
 ![alt text](./Figures/snapper_382_qc_thin5000_heterogeneous_pH_PC1_joined.png)
