@@ -1,0 +1,342 @@
+---
+title: "SeaScapeAnalyses_RDA_plots"
+output: html_document
+date: '2022-05-07'
+---
+
+```{r include=FALSE}
+library(leaflet) #optionnal to check samples locs on google maps
+library(psych) # Used to investigate correlations among predictors    
+library(vegan) # Used to run RDA
+library(adegenet)
+library(vegan)
+library(fmsb)
+library(glue)
+library(vcfR)
+library(tidyverse)
+library(rgdal)
+library(SNPRelate)
+library(scales)
+library(ggsci)
+library(sf)
+library(ggspatial)
+library(ggrepel)
+library(patchwork)
+source("functions.R")
+```
+
+#set parameters
+```{r}
+Project  <- "snapper"
+data_set <- "snapper_382"
+filter   <- "qc_thin5000"
+env_set  <- "heterogeneous"
+
+shp_file <- "D:/Research/Scripts/R/shapefiles/NewZealand_Boundary.shp"
+gds_file <- c(glue("D:/Research/Projects/{Project}/05_data/{data_set}/{data_set}_{filter}.gds")) # path needs to be vectorised 
+RDA_file <- glue("D:/Research/Projects/{Project}/06_output/output/{data_set}/seascape_genomics/{data_set}_{env_set}_environmental_variables.tsv")
+data_dir <- glue("D:/Research/Projects/{Project}/06_output/output/{data_set}/seascape_genomics/{data_set}_{filter}/{env_set}")
+out      <- glue("{data_dir}/{data_set}_{filter}_{env_set}")
+```
+
+#load data from RDA analyses
+```{r}
+env_keep_df <- read_tsv(glue("{out}_selected_ENV_parameters.tsv"))
+Bio_OR_df   <- read_tsv(glue("{out}_BIO-ORACLE_layer_info.tsv"))
+
+load(file = glue("{out}_imputed_snps.R"))
+#load(file = glue("{out}_RDA.space.R"))
+load(file = glue("{out}_RDA_output.R"))
+identical(rownames(snps),rownames(data.frame(Mf.RDA$CCA$u[,1]))) #fail safe, has to be true
+
+#change this so pop info as saved as output
+RDA_input     <- read_tsv(RDA_file)
+RDA_input     <- RDA_input[match(rownames(snps), RDA_input$IND),]
+RDA_input     <- RDA_input %>% filter(IND %in% rownames(snps)) %>% dplyr::arrange(IND)
+RDA_input$POP <- as.factor(RDA_input$POP)
+sample_info   <- RDA_input[,1:4]
+identical(rownames(snps),sample_info$IND) #failsafe, has to be true
+st.RDA        <- RDA_input %>% st_as_sf(coords = c("LONG","LATH"),crs=4326, remove=FALSE)
+keep.env      <- colnames(env_keep_df)
+```
+
+#load SNP data, chromosome information, and New Zealand shapefile
+```{r}
+#read GDS SNPrelate
+gds      <- snpgdsReadGDS(gds_file = gds_file) #SNPRelate::snpgdsClose(gds)
+SNP_info <- snpgdsSNPsum(gds)
+
+#get chromosome information 
+CHR_info <- chr_info(SNP_info)    
+
+#add chr info to SNPinfo
+#cumilative base pair (BPcum) is added for manhattan plotting
+SNP_info <- left_join(SNP_info,CHR_info[,c("CHR","LG","tot")]) %>% arrange(LG,POS) %>% mutate(BPcum = tot + POS)
+
+#load mapping shapefiles
+st.NZ      <- st_read(shp_file)
+#extent of maps
+LONG <- c(170, 179.1)
+LATH <- c(-43,-34)
+```
+#set plotting estatics
+```{r}
+#set colours and labels for legend
+site_leglabs <- levels(sample_info$POP)                                               
+site_legcols <- setNames(hue_pal()(length(site_leglabs)), site_leglabs)                   #site colors
+site_legpch  <- setNames(c(rep(c(15,16,17,18),10))[1:length(site_leglabs)],site_leglabs)  #recurring shapes
+site_shapes  <- setNames(c(1:length(site_leglabs)),site_leglabs)                          #unique shapes
+```
+
+#obtain summary from RDA
+```{r}
+RDA_sum <- summary(eigenvals(Mf.RDA, model = "constrained"))
+
+#generate x and y labels (% constrained variation)
+x.lab <- paste0("RDA1 (", round(RDA_sum[2,1]*100,2),"%)")
+y.lab <- paste0("RDA2 (", round(RDA_sum[2,2]*100,2),"%)")
+
+### ggplot version ###
+scores = scores(Mf.RDA, display=c("sp", "wa", "bp"), scaling="symmetric", choices = c(1,2))
+#biplot needs adjustment to get same scale
+scores$biplot <- scores$biplot*10
+```
+
+#main RDA plot
+```{r, fig.height=6, fig.width=12}
+#RDA
+RDA_main <- ggplot()+
+  geom_hline(yintercept=0, linetype="dotted") +
+  geom_vline(xintercept=0, linetype="dotted") +
+  geom_point(data = data.frame(scores$species),aes(x=RDA1,y=RDA2), size =1.0, color = "gray32", shape = 20)+ #SNPs
+  geom_point(data = data.frame(scores$sites),aes(x=RDA1,y=RDA2, color = sample_info$POP, shape=sample_info$POP), size = 3)+ #individuals
+  geom_segment(data = data.frame(scores$biplot),aes(x = 0, y = 0, xend = RDA1, yend = RDA2),arrow = arrow(length = unit(0.5, "cm")),color = "#0868ac")+ #ENV ordination
+  geom_text_repel(data = data.frame(scores$biplot),aes(x = RDA1, y = RDA2, label = str_replace_all(rownames(Mf.RDA$CCA$biplot),"_","\n")),color = "#0868ac", fontface= "bold",min.segment.length = Inf)+
+  scale_shape_manual(values=site_legpch)+
+  labs(color="Sample\nLocation",shape="Sample\nLocation")+
+  xlab(x.lab)+
+  ylab(y.lab)+
+  theme_bw()+
+  theme(legend.position = c(1,1),
+        legend.justification = c("right","top"),
+        legend.background = element_blank(),
+        panel.grid = element_blank())
+
+#MAP
+MAP_main <- ggplot()+
+  geom_sf(data  = st.NZ, fill="#F5F5DC")+
+  geom_sf(data  = st.RDA,
+          aes(color = POP,
+              shape = POP),
+          alpha = 1,
+          size  = 4) +
+  coord_sf(xlim = LONG, 
+           ylim = LATH, 
+           expand = FALSE)+
+  ylab("Latitude")+
+  xlab("Longitude")+
+  scale_shape_manual(values = site_legpch)+
+  theme(plot.title = element_text(size = 20, face = "bold"), 
+        panel.background = element_rect(fill = "white"), 
+        panel.border = element_rect(color = "black",fill = NA,size = 3),
+        axis.text  = element_text(size = 15),
+        axis.title = element_text(size = 15, face = "bold"),
+        legend.position = c(0,1),
+        legend.justification = c("left","top"),
+        legend.background = element_blank())+
+  annotation_scale(location = "bl", 
+        width_hint = 0.4) +
+  annotation_north_arrow(location = "bl", 
+        which_north = "true", 
+        pad_x = unit(0.1, "in"), 
+        pad_y = unit(0.5, "in"),
+        style = north_arrow_fancy_orienteering)
+
+#COMBINED
+MAIN <- MAP_main + RDA_main+theme(legend.position = "none")
+ggsave(plot = MAIN,filename = glue("{out}_MAIN_joined.png"),height = 8,width = 16,dpi = 300,units = "in")
+```
+
+#obtian correlation values from the first RDA axis
+```{r,fig.width=4,fig.height=4}
+# Species scores for the first constrained axes
+RDA.load <- scores(Mf.RDA, choices=c(1), display="species")  
+
+#calculate standerdised load deviations from sd
+sdnorm    <- function(x){(x-mean(x))/sd(x)}
+sdnorm    <- sdnorm(RDA.load[,1]) 
+sdnormabs <- abs(sdnorm)
+sdnorm_df <- cbind.data.frame(names(sdnormabs), unname(sdnormabs))
+colnames(sdnorm_df) <- c("LOC","normloading")
+  
+#candidate loci with standardized load deviations more the x times the threshold 
+threshold <- 3
+cand      <- sdnormabs[which(sdnormabs > threshold)]
+N_cand    <- length(cand) 
+#make df of candidate loci
+cand_df <- cbind.data.frame(rep(1,times=N_cand), names(cand), unname(cand))
+colnames(cand_df) <- c("axis","LOC","normloading")
+
+#Identify environmental correlations   
+#Let's add in the correlations of each candidate SNP with the eight environmental predictors:
+foo <- matrix(nrow=(N_cand), ncol=length(keep.env))
+colnames(foo) <- keep.env
+for (j in 1:length(cand_df$LOC)) {
+  nam <- cand_df[j,2]
+  snp.gen <- snps[,nam]
+  foo[j,] <- apply(env_keep_df,2,function(x) cor(x,snp.gen))
+}
+cand_df <- cbind.data.frame(cand_df,foo)  
+
+#Next, we'll see which of the predictors each candidate SNP is most strongly correlated with:
+for (j in 1:length(cand_df$LOC)) {
+  bar <- cand_df[j,]
+  cand_df[j,(length(keep.env)+4)] <- names(which.max(abs(bar[4:(length(keep.env)+3)]))) # gives the variable
+  cand_df[j,(length(keep.env)+5)] <- max(abs(bar[4:(length(keep.env)+3)]))              # gives the correlation
+}
+colnames(cand_df)[(length(keep.env)+4)] <- "predictor"
+colnames(cand_df)[(length(keep.env)+5)] <- "correlation"
+
+#calculate correlations
+for(i in 1:ncol(env_keep_df)){
+  cor_i <- apply(snps,2, function(x) cor(env_keep_df[i],x))
+  sdnorm_df[[colnames(env_keep_df)[i]]] <- cor_i
+}
+
+sdnorm_df <- drop_na(sdnorm_df)
+sdnorm_df$LOC <- str_replace_all(sdnorm_df$LOC,"_",":")
+sdnorm_df <- left_join(sdnorm_df,SNP_info)
+
+cand_table   <- table(cand_df$predictor) 
+cand_PCs     <- names(cand_table)
+cand_N       <- length(cand_PCs)
+cand_col     <- pal_npg("nrc", alpha = 0.7)(cand_N) #set colors
+legend_names <- paste0(cand_PCs," - " ,unname(cand_table))
+```
+
+#extract environmental parameter values from Bio-ORACLE
+```{r,fig.width=12,fig.height=8}
+#get layer data from Bio-ORACLE parameters
+layer_data <- sdmpredictors::load_layers(layercodes  = Bio_OR_df$layer_code,
+                                         equalarea   = FALSE,
+                                         rasterstack = TRUE,
+                                         datadir     = "D:/Research/Bio-ORACLE/layer_data")
+layer_crop <- crop(layer_data, extent(LONG, LATH))
+raster.list <- unstack(layer_crop)
+
+#get parameter values for each individual
+env_data <- data.frame(individual = sample_info$IND,
+                       location   = sample_info$POP,
+                       long       = sample_info$LONG,
+                       lat        = sample_info$LATH,
+                       depth      = raster::extract(layer_data,sample_info[,c("LONG","LATH")]))
+env_data$location <- as.factor(env_data$location)
+colnames(env_data) <- str_remove_all(colnames(env_data), "^depth.")
+```
+
+#create panel plot for each reatined environmental parameter
+```{r}
+for(layer_i in 1:nrow(Bio_OR_df)){
+  name <- Bio_OR_df$RDA_PC[layer_i] 
+  raster <- raster.list[[layer_i]]
+  raster.points <- rasterToPoints(raster)
+  raster.df <- data.frame(raster.points)
+  colnames(raster.df) <- c("x","y","z")
+  min_raster <- min(raster.points[,3])
+  max_raster <- max(raster.points[,3])
+  
+  low <- "darkblue" # Bio_OR_df$low[layer_i]
+  mid <-  Bio_OR_df$mid[layer_i]
+  high <- Bio_OR_df$high[layer_i]
+  
+  #extract ordination from selected environmental parameter
+  biplot_df <- dplyr::filter(as.data.frame(scores$biplot),row.names(as.data.frame(scores$biplot)) %in% name)
+  
+  
+  MAP_plot <- ggplot() +
+    geom_raster(data = raster.df , aes(x = x, y = y, fill = z))+
+    geom_sf(data  = st.NZ, fill="#F5F5DC")+
+    geom_sf(data  = st.RDA, aes(shape = POP), col = "black", alpha = 1, size= 4) +
+    labs(x="Longitude", y="Latitude")+
+    scale_shape_manual(values = site_shapes)+
+    scale_fill_gradient2(low  = low,
+                         mid  = mid,
+                         high = high,
+                         midpoint = mean(raster.df$z),
+                         na.value = "grey50",
+                         name = str_replace_all(name,"_","\n"))+
+    coord_sf(xlim = LONG, ylim = LATH, expand = FALSE)+
+    annotation_north_arrow(location    = "br", 
+                           which_north = "true", 
+                           pad_x       = unit(0.1, "in"), 
+                           pad_y       = unit(0.5, "in"),
+                           style       = north_arrow_fancy_orienteering)+
+    theme_bw()+
+    theme(legend.position      = c(0,1),
+          legend.justification = c("left","top"),
+          legend.background    = element_blank())
+
+  RDA_plot <- ggplot()+
+    geom_hline(yintercept=0, linetype="dotted") +
+    geom_vline(xintercept=0, linetype="dotted") +
+    geom_point(data = data.frame(scores$species),aes(x=RDA1,y=RDA2), size =1.0, color = "gray32", shape = 20)+ #SNPs
+    geom_point(data = data.frame(scores$sites),aes(x=RDA1,y=RDA2, color = env_data[,4+layer_i], shape=sample_info$POP), size = 3)+ #individuals
+    geom_segment(data = data.frame(biplot_df),aes(x = 0, y = 0, xend = RDA1, yend = RDA2),arrow = arrow(length = unit(0.5, "cm")),color = "#0868ac")+ #ENV ordination
+    geom_text_repel(data = data.frame(biplot_df),aes(x = RDA1, y = RDA2, label = str_replace_all(rownames(biplot_df),"_","\n")),color = "#0868ac", fontface= "bold",min.segment.length = Inf)+
+    scale_shape_manual(values = site_shapes)+
+    scale_color_gradient2(low      = low,
+                          mid      = mid,
+                          high     = high,
+                          midpoint = mean(raster.df$z),
+                          na.value = "grey50",
+                          limits   = c(min_raster,max_raster),
+                          name     = str_replace_all(name,"_","\n"))+
+    labs(x     = x.lab, y = y.lab, fill  = "Sample\nLocation", color = "Sample\nLocation", shape = "Sample\nLocation")+
+    theme_bw()+
+    theme(legend.position = "none", 
+          legend.justification = c("right","top"),
+          legend.background = element_blank(),
+          panel.grid = element_blank())
+
+  #manhattam plot
+  source("functions.R")
+  comp_cols  <- scale_color_manual(values = ggsci::pal_npg("nrc")(5)[c(3)]) 
+  axisdf     <- axisdf(sdnorm_df)
+  bg_rect    <- bg_rect(axisdf)
+  x_scale    <- x_scale(axisdf)
+  theme_last <- theme(panel.grid  = element_blank(),
+                      plot.margin = unit(c(0,0,0.0,0), units = "in"),
+                      axis.text.x = element_text(angle = 0, size = 12),
+                      legend.position="bottom")
+  MAN_plot <- ggplot() + bg_rect + 
+    geom_point(data = sdnorm_df, aes(x=BPcum,y= abs(.data[[name]])), size = 0.5) +
+    geom_point(data = dplyr::filter(sdnorm_df, normloading > 2.5), aes(x=BPcum,y=abs(.data[[name]])), size = 0.7, color = "red") +
+    xlab("Chromosome") + 
+    ylab("correlation") +  theme_bw() + x_scale + theme_last
+
+  #correlation plot
+  cor_df <- cbind(RDA_input,data.frame(Mf.RDA$CCA$u[,1]))
+  colnames(cor_df) <- c(colnames(RDA_input),"PCi")
+  envs <- c(keep.env)
+  cor  <- cor.test(cor_df[["PCi"]],cor_df[[name]])
+  pval <- signif(cor$p.value,3)
+  r2   <- round(cor$estimate,4)
+  
+  REG_plot <- ggplot(cor_df, aes(x=PCi,y=.data[[name]]))+
+    stat_smooth(method = "lm", col = "blue")+
+    geom_point()+
+    theme_bw()+
+    labs(x=paste0("RDA",1),y=name)+
+    annotate("text",label=bquote(r^2==~.(r2)~","~italic(p)==.(pval)),x = Inf,y = Inf,vjust = 1,hjust = 1,size=4)
+
+  #combine plots
+  all <- ((MAP_plot | (RDA_plot / REG_plot) ) / MAN_plot)   + 
+            theme(legend.position = "none") +
+             plot_layout(nrow = 2, heights = c(4,1))
+  ggsave(plot = all,filename = glue("{out}_{name}_joined.png"),height = 10,width = 18,dpi = 300,units = "in")
+}
+```
+
+
+
+
