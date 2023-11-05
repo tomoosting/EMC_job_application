@@ -1,4 +1,4 @@
-# EMC_job_application
+# Seascape genomics
 Source code from Tom Oosting
 
 **Contents**
