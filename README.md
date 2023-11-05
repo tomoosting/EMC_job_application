@@ -1,4 +1,4 @@
-# Seascape genomics
+# Genome scan and Seascape genomics visualisation
 Source code from Tom Oosting
 
 **Contents**
